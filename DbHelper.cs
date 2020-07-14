@@ -1,4 +1,7 @@
-﻿/* ***********************************************************************
+/* ***********************************************************************
+ * 版本：2020.7.14
+ * 说明：修正事务无法生效的问题
+ *
  * 版本：2020.7.8
  * 说明：移除自定义Command对象，调整事务执行参数
  *       释放连接方式统一处理
@@ -822,6 +825,8 @@ namespace MaterialBasic.Utils
         /// </summary>
         private ConnectionPool connectionPool;
 
+        private MySqlCommand sqlCommand;
+
         #region //数据库访问
 
         private DBOptions _mySqlDBOptions = new DBOptions();
@@ -855,14 +860,27 @@ namespace MaterialBasic.Utils
         }
 
         /// <summary>
+        /// 构造函数
+        /// </summary>
+        /// <param name="mySqlDBOptions"></param>
+        public MySqlDB(MySqlCommand mySqlCommand)
+        {
+            sqlCommand = mySqlCommand;
+        }
+
+        /// <summary>
         /// 获取一个数据库连接
         /// <para>如果没有启用连接池则返回一个单连接</para>
         /// </summary>
+        /// <param name="needCreate">是否强制创建</param>
         /// <returns></returns>
-        private MySqlConnection GetConnection()
+        private MySqlConnection GetConnection(bool needCreate = true)
         {
             try
             {
+                if (!needCreate && sqlCommand != null)
+                    return sqlCommand.Connection;
+
                 if (connectionPool != null)
                     return connectionPool.GetConnection();
 
@@ -929,7 +947,8 @@ namespace MaterialBasic.Utils
         public DBResult Execute(string sql, params object[] param)
         {
             DBResult result = new DBResult();
-            var conn = GetConnection();
+            // 执行语句，不强制创建conn对象，如果有则继承，这样才能保证事务的正常运行
+            var conn = GetConnection(false);
             try
             {
                 if (conn == null)
@@ -943,10 +962,15 @@ namespace MaterialBasic.Utils
                     conn.Open();
                 }
 
-                using (var cmd = new MySqlCommand(sql, conn))
+                if (sqlCommand == null)
                 {
-                    result = Execute(conn, cmd, sql, param);
-                };
+                    using (var cmd = new MySqlCommand(sql, conn))
+                    {
+                        result = Execute(conn, cmd, sql, param);
+                    };
+                }
+                else
+                    result = Execute(conn, sqlCommand, sql, param);
             }
             catch (Exception ex)
             {
@@ -956,7 +980,9 @@ namespace MaterialBasic.Utils
             }
             finally
             {
-                CloseConnection(conn);
+                // 释放连接的时候，如果sqlCommand不为null，则为事务传递中的Command对象，在这里不做释放，否则正常释放
+                if (sqlCommand == null)
+                    CloseConnection(conn);
             }
 
             return result;
@@ -1058,7 +1084,7 @@ namespace MaterialBasic.Utils
                     try
                     {
                         // 创建一个单链接的数据库对象
-                        result = action(new MySqlDB(_mySqlDBOptions.ConnectionString, _mySqlDBOptions.CommandTimeout));
+                        result = action(new MySqlDB(cmd));
                         if (result.IsSuccessed)
                             transaction.Commit();
                         else
@@ -1281,7 +1307,6 @@ namespace MaterialBasic.Utils
                 {
                     conn.Open();
                 }
-
                 using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
                     result = GetDataTable(conn, cmd, sql, param);
