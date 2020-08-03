@@ -1,6 +1,10 @@
 /* ***********************************************************************
- * 版本：2020.7.14
- * 说明：修正事务无法生效的问题
+ * 版本：2020.7.31
+ * 说明：数据库初始化选项增加是否初始化连接池的选项
+ *
+ * 版本：2020.7.24
+ * 说明：移除自定义Command对象
+ *       移除弃用的事务方法
  *
  * 版本：2020.7.8
  * 说明：移除自定义Command对象，调整事务执行参数
@@ -21,7 +25,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 
-namespace MaterialBasic.Utils
+namespace SPDKnowledgeApi.Utils
 {
     /// <summary>
     /// DBHelper
@@ -52,6 +56,13 @@ namespace MaterialBasic.Utils
         public DBHelper(DBOptions dbOptions)
         {
             _dbOptions = dbOptions;
+        }
+
+        public static string EscapeString(string str)
+        {
+            if (string.IsNullOrEmpty(str)) return str;
+
+            return MySqlHelper.EscapeString(str);
         }
     }
 
@@ -203,114 +214,11 @@ namespace MaterialBasic.Utils
     }
 
     /// <summary>
-    /// 事务传递的SqlCommand对象的封装
-    /// </summary>
-    public class CustomCommand
-    {
-        private MySqlCommand MySqlCommand = null;
-
-        /// <summary>
-        /// 执行sql语句
-        /// </summary>
-        /// <param name="sql">sql语句</param>
-        /// <param name="param">sql参数</param>
-        /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
-        public DBResult ExecuteNonQuery(string sql, params object[] param)
-        {
-            DBResult result = new DBResult();
-            try
-            {
-                MySqlCommand.CommandType = CommandType.Text;
-                MySqlCommand.CommandText = sql;
-                MySqlDB.InitParameters(MySqlCommand, param);
-                result.AffectRowCount = MySqlCommand.ExecuteNonQuery();//执行非查询SQL语句
-                result.IsSuccessed = true;
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccessed = false;
-                result.Message = ex.Message;
-                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// 执行sql语句，获取首行首列
-        /// </summary>
-        /// <param name="sql">sql语句</param>
-        /// <param name="param">sql参数</param>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
-        public DBResult ExecuteScalar(string sql, params object[] param)
-        {
-            DBResult result = new DBResult();
-            try
-            {
-                MySqlCommand.CommandType = CommandType.Text;
-                MySqlCommand.CommandText = sql;
-                MySqlDB.InitParameters(MySqlCommand, param);
-                result.DataObject = MySqlCommand.ExecuteScalar();//执行非查询SQL语句
-                result.IsSuccessed = true;
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccessed = false;
-                result.Message = ex.Message;
-                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 执行sql语句，获取DataTable
-        /// </summary>
-        /// <param name="sql">sql语句</param>
-        /// <param name="param">sql参数</param>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
-        public DBResult GetDataTable(string sql, params object[] param)
-        {
-            DBResult result = new DBResult();
-            try
-            {
-                using (var DataAdapter = new MySqlDataAdapter())
-                {
-                    MySqlCommand.CommandType = CommandType.Text;
-                    MySqlCommand.CommandText = sql;
-                    MySqlDB.InitParameters(MySqlCommand, param);
-                    DataAdapter.SelectCommand = MySqlCommand;
-                    DataTable myDT = new DataTable();
-                    DataAdapter.Fill(myDT);
-                    result.Table = myDT;
-                    result.IsSuccessed = true;
-                }
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccessed = false;
-                result.Message = ex.Message;
-                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 构造函数
-        /// </summary>
-        /// <param name="cmd">SqlCommand对象</param>
-        public CustomCommand(MySqlCommand cmd)
-        {
-            this.MySqlCommand = cmd;
-        }
-    }
-
-    /// <summary>
     /// 数据库连接池管理对象
     /// </summary>
     public class PooledConnection
     {
+        private NLog.Logger _logger;
         private MySqlConnection _mConnection = null;// 数据库连接
         private bool _mBBusy = false; // 此连接是否正在使用的标志，默认没有正在使用
 
@@ -320,6 +228,7 @@ namespace MaterialBasic.Utils
         /// <param name="connection">MySqlConnection</param>
         public PooledConnection(ref MySqlConnection connection)
         {
+            _logger = NLog.LogManager.GetCurrentClassLogger();
             _mConnection = connection;
         }
 
@@ -363,6 +272,7 @@ namespace MaterialBasic.Utils
         private List<PooledConnection> _mPooledconnections = null; // 存放连接池中数据库连接的向量
         private string _mySqlConnection = "";//ConfigurationManager.ConnectionStrings["ConnectSql"].ConnectionString;
         private static object objectLocker = new object();
+        private NLog.Logger _logger;
 
         /// <summary>
         /// 构造函数
@@ -370,6 +280,7 @@ namespace MaterialBasic.Utils
         /// <param name="options">数据库连接字配置</param>
         private ConnectionPool(DBOptions options)
         {
+            _logger = NLog.LogManager.GetCurrentClassLogger();
             _mySqlConnection = options.ConnectionString;
             _initialConnections = options.InitialConnections;
             _incrementalConnections = options.IncrementalConnections;
@@ -467,10 +378,10 @@ namespace MaterialBasic.Utils
             {
                 if (this._maxConnections > 0 && this._mPooledconnections.Count >= this._maxConnections)
                 {
-                    DBLogger.Logger.Trace($"连接数已经达到最大值无法追加.");
+                    _logger.Trace($"连接数已经达到最大值无法追加.");
                     break;
                 }
-                DBLogger.Logger.Trace($"追加了 1 个连接.");
+                _logger.Trace($"追加了 1 个连接.");
                 try
                 {
                     MySqlConnection tmpConnect = NewConnection();
@@ -478,7 +389,7 @@ namespace MaterialBasic.Utils
                 }
                 catch (Exception ex)
                 {
-                    DBLogger.Logger.Error(ex, $"追加连接 {x + 1} 异常");
+                    _logger.Error(ex, $"追加连接 {x + 1} 异常");
                     throw ex;
                 }
             }
@@ -534,8 +445,8 @@ namespace MaterialBasic.Utils
                 // 重新从池中查找是否有可用连接
                 conn = FindFreeConnection();
             }
-            DBLogger.Logger.Trace($"分配了一个数据库连接.");
-            DBLogger.Logger.Trace($"当前工作中的连接数：{GetBusyConnectionsCount()}, 空闲的连接数：{GetFreeConnectionsCount()}, 最大连接数：{MaxConnections}");
+            _logger.Trace($"分配了一个数据库连接.");
+            _logger.Trace($"当前工作中的连接数：{GetBusyConnectionsCount()}, 空闲的连接数：{GetFreeConnectionsCount()}, 最大连接数：{MaxConnections}");
             return conn;
         }
 
@@ -596,7 +507,7 @@ namespace MaterialBasic.Utils
             }
             catch (Exception ex)
             {
-                DBLogger.Logger.Error(ex, "数据库连接失败.." + ex.Message);
+                _logger.Error(ex, "数据库连接失败.." + ex.Message);
                 // 上面抛出异常，此连接己不可用，关闭它，并返回 false;
                 CloseConnection(conn);
                 return false;
@@ -622,11 +533,11 @@ namespace MaterialBasic.Utils
                 var temp = _mPooledconnections.Find(x => x.GetConnection() == conn);
                 if (temp != null)
                 {
-                    DBLogger.Logger.Trace($"回收了一个数据库连接.");
+                    _logger.Trace($"回收了一个数据库连接.");
                     temp.IsBusy = false;
                 }
             }
-            DBLogger.Logger.Trace($"当前工作中的连接数：{GetBusyConnectionsCount()}, 空闲的连接数：{GetFreeConnectionsCount()}, 最大连接数：{MaxConnections}");
+            _logger.Trace($"当前工作中的连接数：{GetBusyConnectionsCount()}, 空闲的连接数：{GetFreeConnectionsCount()}, 最大连接数：{MaxConnections}");
         }
 
         /// <summary>
@@ -686,14 +597,14 @@ namespace MaterialBasic.Utils
             {
                 lock (objectLocker)
                 {
-                    DBLogger.Logger.Trace($"关闭了一个数据库连接.");
+                    _logger.Trace($"关闭了一个数据库连接.");
                     conn.Close();
                     conn.Dispose();
                 }
             }
             catch (Exception ex)
             {
-                DBLogger.Logger.Error(ex, $"关闭连接异常.");
+                _logger.Error(ex, $"关闭连接异常.");
                 throw ex;
             }
         }
@@ -803,6 +714,20 @@ namespace MaterialBasic.Utils
         /// 数据库执行语句时的超时时间(s)
         /// </summary>
         public int CommandTimeout { get; set; } = 1800;
+
+        /// <summary>
+        /// 是否应用连接池
+        /// </summary>
+        public bool UseConnectPool { get; set; }
+
+        public DBOptions()
+        {
+        }
+
+        public DBOptions(string connStr)
+        {
+            this.ConnectionString = connStr;
+        }
     }
 
     /// <summary>
@@ -827,6 +752,12 @@ namespace MaterialBasic.Utils
 
         private MySqlCommand sqlCommand;
 
+        public static string EscapeString(string v)
+        {
+            if (string.IsNullOrEmpty(v)) return v;
+            return MySql.Data.MySqlClient.MySqlHelper.EscapeString(v);
+        }
+
         #region //数据库访问
 
         private DBOptions _mySqlDBOptions = new DBOptions();
@@ -845,7 +776,7 @@ namespace MaterialBasic.Utils
             _mySqlDBOptions = mySqlDBOptions;
 
             // 创建一个数据库连接
-            if (connectionPool == null)
+            if (_mySqlDBOptions.UseConnectPool && connectionPool == null)
                 connectionPool = ConnectionPool.CreateConnectionPoolInstance(mySqlDBOptions).CreatePool();
         }
 
@@ -881,8 +812,11 @@ namespace MaterialBasic.Utils
                 if (!needCreate && sqlCommand != null)
                     return sqlCommand.Connection;
 
-                if (connectionPool != null)
+                if (_mySqlDBOptions.UseConnectPool && connectionPool != null)
                     return connectionPool.GetConnection();
+
+                if (sqlCommand != null)
+                    return new MySqlConnection(sqlCommand.Connection.ConnectionString);
 
                 return new MySqlConnection(_mySqlDBOptions.ConnectionString);
             }
@@ -1108,67 +1042,6 @@ namespace MaterialBasic.Utils
             finally
             {
                 CloseConnection(conn);
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 通过事务执行sql
-        /// </summary>
-        /// <param name="action">sqlcommand对象</param>
-        /// <returns></returns>
-        [Obsolete("以后将移除此方法，如果需要使用事务后者嵌套事务执行时，请使用 ExecuteWithTransaction(Func<MySqlDB, DBResult> action) ")]
-        public DBResult ExecuteWithTransaction(Func<CustomCommand, DBResult> action)
-        {
-            DBResult result = new DBResult();
-            var conn = GetConnection();
-            try
-            {
-                if (conn == null)
-                {
-                    DBLogger.Logger.Error(result.Message = "数据库连接失败..");
-                    result.IsSuccessed = false;
-                    return result;
-                }
-                if (conn.State != ConnectionState.Open)
-                {
-                    conn.Open();
-                }
-                using (MySqlCommand cmd = conn.CreateCommand())
-                {
-                    cmd.CommandTimeout = _mySqlDBOptions.CommandTimeout;
-                    var transaction = conn.BeginTransaction();
-                    cmd.Transaction = transaction;
-                    try
-                    {
-                        result = action(new CustomCommand(cmd));
-                        if (result.IsSuccessed)
-                            transaction.Commit();
-                        else
-                            transaction.Rollback();
-                    }
-                    catch (Exception ex)
-                    {
-                        transaction.Rollback();
-                        result.IsSuccessed = false;
-                        result.Message = ex.Message;
-                        DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccessed = false;
-                result.Message = ex.Message;
-                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-            }
-            finally
-            {
-                if (conn != null && conn.State != ConnectionState.Closed)
-                {
-                    connectionPool.ReturnConnection(conn);
-                }
             }
 
             return result;
