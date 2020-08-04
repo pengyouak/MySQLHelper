@@ -1,4 +1,7 @@
 /* ***********************************************************************
+ * 版本：2020.8.4
+ * 说明：查询时填充DataSet
+ *
  * 版本：2020.7.31
  * 说明：数据库初始化选项增加是否初始化连接池的选项
  *
@@ -25,7 +28,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 
-namespace SPDKnowledgeApi.Utils
+namespace MaterialBasic.Utils
 {
     /// <summary>
     /// DBHelper
@@ -849,7 +852,6 @@ namespace SPDKnowledgeApi.Utils
         /// <param name="sql">sql语句</param>
         /// <param name="param">sql参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult Execute(MySqlConnection conn, MySqlCommand cmd, string sql, params object[] param)
         {
             DBResult result = new DBResult();
@@ -877,7 +879,6 @@ namespace SPDKnowledgeApi.Utils
         /// <param name="sql">sql语句</param>
         /// <param name="param">sql参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult Execute(string sql, params object[] param)
         {
             DBResult result = new DBResult();
@@ -922,12 +923,12 @@ namespace SPDKnowledgeApi.Utils
             return result;
         }
 
+        [Obsolete("可能在以后会移除此方法，请使用 ExecuteWithTransaction(Func<MySqlDB, DBResult> action) 代替")]
         /// <summary>
         /// 通过事务批量执行sql语句
         /// </summary>
         /// <param name="sql">sql语句集合</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult ExecuteWithTransaction(List<string> sql)
         {
             DBResult result = new DBResult();
@@ -1055,7 +1056,6 @@ namespace SPDKnowledgeApi.Utils
         /// <param name="sql">sql语句</param>
         /// <param name="param">sql参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult GetTopObject(MySqlConnection conn, MySqlCommand cmd, string sql, params object[] param)
         {
             DBResult result = new DBResult();
@@ -1084,7 +1084,6 @@ namespace SPDKnowledgeApi.Utils
         /// <param name="sql">sql语句模板</param>
         /// <param name="param">sql语句参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult GetTopObject(string sql, params object[] param)
         {
             DBResult result = new DBResult();
@@ -1123,47 +1122,9 @@ namespace SPDKnowledgeApi.Utils
         /// <summary>
         /// 获取DataTable
         /// </summary>
-        /// <param name="conn">数据库连接对象</param>
-        /// <param name="cmd">SqlCommand对象</param>
-        /// <param name="sql">sql语句</param>
-        /// <param name="param">sql参数</param>
-        /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
-        public DBResult GetDataTable(MySqlConnection conn, MySqlCommand cmd, string sql, params object[] param)
-        {
-            DBResult result = new DBResult();
-            try
-            {
-                using (var DataAdapter = new MySqlDataAdapter())
-                {
-                    cmd.CommandType = CommandType.Text;
-                    cmd.CommandText = sql;
-                    cmd.CommandTimeout = _mySqlDBOptions.CommandTimeout;
-                    InitParameters(cmd, param);
-                    DataAdapter.SelectCommand = cmd;
-                    DataTable myDT = new DataTable();
-                    DataAdapter.Fill(myDT);
-                    result.Table = myDT;
-                    result.IsSuccessed = true;
-                }
-            }
-            catch (Exception ex)
-            {
-                result.IsSuccessed = false;
-                result.Message = ex.Message;
-                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 获取DataTable
-        /// </summary>
         /// <param name="sql">sql语句模板</param>
         /// <param name="param">sql语句参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult GetDataTable(string sql, params object[] param)
         {
             DBResult result = new DBResult();
@@ -1182,7 +1143,7 @@ namespace SPDKnowledgeApi.Utils
                 }
                 using (MySqlCommand cmd = new MySqlCommand(sql, conn))
                 {
-                    result = GetDataTable(conn, cmd, sql, param);
+                    result = GetDataSet(conn, cmd, sql, param);
                 }
             }
             catch (Exception ex)
@@ -1209,7 +1170,6 @@ namespace SPDKnowledgeApi.Utils
         /// <param name="sql">sql语句模板</param>
         /// <param name="param">sql语句的参数</param>
         /// <returns></returns>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "<挂起>")]
         public DBResult GetDataTable(int currPage, int pageSize, string pageBy, bool isAsc, string sql, params object[] param)
         {
             // 不执行分页
@@ -1278,6 +1238,44 @@ namespace SPDKnowledgeApi.Utils
         }
 
         /// <summary>
+        /// 获取DataSet
+        /// </summary>
+        /// <param name="conn">数据库连接对象</param>
+        /// <param name="cmd">SqlCommand对象</param>
+        /// <param name="sql">sql语句</param>
+        /// <param name="param">sql参数</param>
+        /// <returns></returns>
+        public DBResult GetDataSet(MySqlConnection conn, MySqlCommand cmd, string sql, params object[] param)
+        {
+            DBResult result = new DBResult();
+            try
+            {
+                using (var DataAdapter = new MySqlDataAdapter())
+                {
+                    cmd.CommandType = CommandType.Text;
+                    cmd.CommandText = sql;
+                    cmd.CommandTimeout = _mySqlDBOptions.CommandTimeout;
+                    InitParameters(cmd, param);
+                    DataAdapter.SelectCommand = cmd;
+                    var ds = new DataSet();
+                    DataAdapter.Fill(ds);
+                    result.DataSet = ds;
+                    if (ds.Tables.Count > 0)
+                        result.Table = ds.Tables[0];
+                    result.IsSuccessed = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                result.IsSuccessed = false;
+                result.Message = ex.Message;
+                DBLogger.Logger.Error(ex, ex.Message + DBLogger.CallingHistory());
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// 初始化SqlCommand的参数
         /// </summary>
         /// <param name="cmd">SqlCommand对象</param>
@@ -1292,10 +1290,10 @@ namespace SPDKnowledgeApi.Utils
                 if (param[i] is KeyValuePair<string, object>)
                 {
                     var p = (KeyValuePair<string, object>)param[i];
-                    cmd.Parameters.Add(new MySqlParameter($"@{p.Key.TrimStart('@')}", p.Value));
+                    cmd.Parameters.AddWithValue($"@{p.Key.TrimStart('@')}", p.Value);
                 }
                 else
-                    cmd.Parameters.Add(new MySqlParameter($"@{i + 1}", param[i]));
+                    cmd.Parameters.AddWithValue($"@{i + 1}", param[i]);
             }
         }
 
